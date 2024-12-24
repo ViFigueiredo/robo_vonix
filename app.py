@@ -1,13 +1,19 @@
-import requests # type: ignore
+import requests  # type: ignore
 import json
-import pyodbc # type: ignore
+import pyodbc  # type: ignore
 import os
-from dotenv import load_dotenv # type: ignore
-import schedule # type: ignore
+from dotenv import load_dotenv  # type: ignore
+import schedule  # type: ignore
 import time
 
 # Carrega as variáveis do arquivo .env
 load_dotenv()
+
+# Validação das variáveis de ambiente
+REQUIRED_ENV_VARS = ['db_server', 'db_name', 'db_username', 'db_password', 'table_name', 'api_key']
+for var in REQUIRED_ENV_VARS:
+    if not os.getenv(var):
+        raise ValueError(f"Variável de ambiente obrigatória '{var}' não está definida.")
 
 # Configuração do SQL Server
 db_server = os.getenv('db_server')
@@ -15,78 +21,130 @@ db_name = os.getenv('db_name')
 db_username = os.getenv('db_username')
 db_password = os.getenv('db_password')
 table_name = os.getenv('table_name')
+api_key = os.getenv('api_key')
 
-# Função para converter valores numéricos em texto
-def number_to_text(value):
-    return str(value)
-
+# Função principal
 def executar_script():
-    # Conexão com o SQL Server
-    conn = pyodbc.connect(f'DRIVER={{ODBC Driver 17 for SQL Server}};SERVER={db_server};DATABASE={db_name};UID={db_username};PWD={db_password}')
-    cursor = conn.cursor()
+    try:
+        conn = pyodbc.connect(
+            f'DRIVER={{ODBC Driver 17 for SQL Server}};SERVER={db_server};DATABASE={db_name};UID={db_username};PWD={db_password}'
+        )
+        cursor = conn.cursor()
+    except pyodbc.Error as e:
+        print(f"Erro ao conectar ao SQL Server: {e}")
+        return
     
-    pagina = 1 # Paginação da api
+    timestamp = 1730419200,
+    pagina = 1  # Paginação da API
     total_registros_baixados = 0
 
-    headers = {
-        'Content-Type': 'application/json',
-        'api-key': os.getenv('api_key')
-    }
-
-    # Loop para consultar a API e inserir no banco
     while True:
-        # Endpoint da API
-        url = f"https://grupoavantti.api.vonixcc.com.br/cc/summaries/calls?timestamp=1730419200&page={pagina}"
+        headers = {
+            'Content-Type': 'application/json',
+            'Authorization': f'Bearer {api_key}'
+        }
+
+        params = {
+            'timestamp': timestamp,
+            'page': pagina
+        }
+
+        url = f"https://grupoavantti.api.vonixcc.com.br/cc/summaries/calls"
+
+        # print(headers['Authorization'])
 
         print(f"\nConsultando a página {pagina}...")
-        response = requests.post(url, headers=headers)
-        
+
+        try:
+            response = requests.get(url, headers=headers, params=params )
+        except requests.RequestException as e:
+            print(f"Erro ao realizar requisição para a API: {e}")
+            break
+
         print(f"Status da resposta: {response.status_code}")
+
         if response.status_code != 200:
-            print(f"Erro ao consultar API. Código de status: {response.status_code}")
-            print("Resposta completa:")
-            print(response.text)
+            print(f"Erro na API. Código de status: {response.status_code}")
+            print("Resposta completa:", response.text)
             break
 
         try:
             data = response.json()
+
         except json.JSONDecodeError:
-            print("Erro ao decodificar JSON:")
-            print(response.text)
+            print("Erro ao decodificar JSON:", response.text)
             break
 
-        # Pega o total de registros e os resultados da página
-        total_registros_api = data.get("total", 0)
-        resultados = data["meta"].get("count")
+        total_registros_api = data.get("meta", {}).get("count", 0)
+        resultados = data.get("data")
         
         if not resultados:
             print(f"Nenhum dado encontrado na página {pagina}. Finalizando...")
             break
 
-        print(f"Dados encontrados na página {pagina}: {len(resultados)} registros.")
+        print(f"Dados encontrados: {resultados} registros.")
 
-        # Adiciona o número de registros encontrados na página atual ao total
         total_registros_baixados += len(resultados)
 
-        for registro in resultados:
+        for registro in data.get("data", []):
             values = (
-                registro.get("cnpj"),
+                registro.get("id"),
+                registro.get("direction"),
+                registro.get("callerNumber"),
+                registro.get("callerInfo"),
+                registro.get("status"),
+                registro.get("reason"),
+                registro.get("ani"),
+                registro.get("ringSecs"),
+                registro.get("holdSecs"),
+                registro.get("talkSecs"),
+                registro.get("queueId"),
+                registro.get("queueName"),
+                registro.get("agentId"),
+                registro.get("agentName"),
+                registro.get("trunkingId"),
+                registro.get("trunkingName"),
+                registro.get("localityId"),
+                registro.get("callTypeId"),
+                registro.get("callTypeName"),
+                registro.get("hangupCauseId"),
+                registro.get("createdAt"),
+                registro.get("answerAt"),
+                registro.get("hangupAt"),
+                registro.get("agentOffers"),
+                registro.get("initialPosition"),
+                registro.get("abandonKey"),
+                registro.get("abandonPosition"),
+                registro.get("transferredTo"),
+                registro.get("bridgedCallId"),
+                registro.get("dnid"),
+                registro.get("ivrSecs"),
+                registro.get("uraId"),
+                registro.get("nodeId"),
+                # registro.get("callsRatings"),
+                # registro.get("profilers"),
+                # registro.get("trees"),
+                # registro.get("tags"),
+                registro.get("profiledAt"),
+                # registro.get("contact")
             )
 
-            # Tentar inserir os valores no SQL Server com tratamento de erro
             try:
                 cursor.execute(f"""
                     INSERT INTO {table_name} (
-                        cnpj,
-                    ) VALUES (?)
-                    """, values)
+                        id, direction, callerNumber, callerInfo, status, reason, ani,
+                        ringSecs, holdSecs, talkSecs, queueId, queueName, agentId,
+                        agentName, trunkingId, trunkingName, localityId, callTypeId,
+                        callTypeName, hangupCauseId, createdAt, answerAt, hangupAt,
+                        agentOffers, initialPosition, abandonKey, abandonPosition,
+                        transferredTo, bridgedCallId, dnid, ivrSecs, uraId, nodeId,
+                        profiledAt
+                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                """, values)
                 conn.commit()
             except pyodbc.DataError as e:
-                print(f"\nErro ao tentar inserir os dados na tabela '{table_name}'")
-                print(f"Dados: {values}")
-                print(f"Detalhes do erro: {e}")
+                print(f"Erro ao inserir dados na tabela '{table_name}': {e}")
 
-        # Se o número total de registros baixados for igual ao total informado pela API, interrompa
         if total_registros_baixados >= total_registros_api:
             print(f"Todos os {total_registros_api} registros foram baixados.")
             break
@@ -94,16 +152,16 @@ def executar_script():
         pagina += 1
 
     conn.close()
+
     print("Processamento concluído.")
 
-# executar_script()
+executar_script()
 
-# Agendar a execução diária às 21h
-srtTime = "21:00"
-schedule.every().day.at(srtTime).do(executar_script)
+# Agendar execução
+# srtTime = "08:42"
+# schedule.every().day.at(srtTime).do(executar_script)
 
-# Loop para manter o script em execução
-print(f"Agendamento iniciado. Aguardando para executar às {srtTime} diariamente...")
-while True:
-    schedule.run_pending()
-    time.sleep(1)
+# print(f"Agendamento iniciado. Aguardando para executar às {srtTime} diariamente...")
+# while True:
+#     schedule.run_pending()
+#     time.sleep(60)
